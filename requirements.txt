@@ -1,0 +1,8 @@
+spacy
+transformers
+torch
+ollama-python
+pytest
+pandas
+numpy
+vaderSentiment
