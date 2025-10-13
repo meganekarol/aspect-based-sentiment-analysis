@@ -2,7 +2,6 @@ from transformers import AutoTokenizer, AutoModelForSequenceClassification
 import torch
 import spacy
 from typing import List
-from pyabsa import ATEPCCheckpointManager
 from src.base import ABSAAnalyzer, AspectSentiment
 
 
