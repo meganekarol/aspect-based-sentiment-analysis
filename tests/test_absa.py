@@ -1,36 +1,39 @@
 from src.lexicon_absa import LexiconABSA
-import random
-import json
+import os
+from src.transformer_absa import TransformerABSA
+import pandas as pd
+from src.llm_absa import LLMABSA
+import pytest
 
-sample_reviews = []
-with open("../data/yelp_sample_20k.json", "r", encoding="utf-8") as f:
-    all_lines = f.readlines()
-    sample_lines = random.sample(all_lines, 5)  # pick 5 random reviews
-    for line in sample_lines:
-        data = json.loads(line)
-        sample_reviews.append(data["text"])
+# Dynamically resolve the data file path
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))  # The project root
+DATA_PATH = os.path.join(BASE_DIR, "data", "yelp_sample.json")
 
-def test_basic_aspect_sentiment():
-    # --- Initialize analyzer ---
-    analyzer = LexiconABSA()
+# Load your dataset
+df = pd.read_json(DATA_PATH, lines=True)
+sample_reviews = df["text"]
 
-    results_table = []
 
+@pytest.mark.parametrize("analyzer_class", [LexiconABSA, TransformerABSA, LLMABSA])
+def test_model(analyzer_class):
+
+    analyzer = analyzer_class()
     for i, review in enumerate(sample_reviews, 1):
         print(f"\n📝 Review {i}: {review[:180]}...")
         aspects = analyzer.analyze(review)
-
         if not aspects:
             print("   ⚠️ No clear aspects detected.")
         else:
             for asp in aspects:
-                results_table.append({
-                    "Review #": i,
-                    "Aspect": asp.aspect,
-                    "Sentiment": asp.sentiment,
-                    "Confidence": asp.confidence
-                })
-                print(f"   ➜ {asp.aspect:<15} | {asp.sentiment:<8} | conf={asp.confidence}")
+                print(f"   ➜ {asp.aspect:<15} | {asp.sentiment:<8} | conf={asp.confidence:.2f}")
 
 if __name__ == "__main__":
-    test_basic_aspect_sentiment()
+    print("=== Lexicon-Based ABSA ===")
+    test_model(LexiconABSA)
+
+    print("\n=== Transformer ABSA ===")
+    test_model(TransformerABSA)
+
+    print("\n=== Local LLM (Ollama) ABSA ===")
+    test_model(LLMABSA)
+

@@ -1,3 +1,6 @@
+matplotlib
+seaborn
+ollama
 spacy
 transformers
 torch

@@ -3,7 +3,7 @@ import torch
 import spacy
 from typing import List
 from src.base import ABSAAnalyzer, AspectSentiment
-
+import pandas as pd
 
 class TransformerABSA(ABSAAnalyzer):
     """Implementation 2 — Pre-trained Transformer ABSA model."""
@@ -37,7 +37,24 @@ class TransformerABSA(ABSAAnalyzer):
 
 
 if __name__ == "__main__":
+
+    df = pd.read_json("../data/yelp_sample.json", lines=True)
+    sample_reviews = df["text"]
+
     model = TransformerABSA()
-    sample = "The camera quality is amazing but the battery life is disappointing."
-    for r in model.analyze(sample):
-        print(f"{r.aspect:<12} → {r.sentiment:<9} ({r.confidence:.2f})")
+    #sample = "The camera quality is amazing but the battery life is disappointing."
+    results_table = []
+    for i, review in enumerate(sample_reviews, 1):
+        print(f"\n📝 Review {i}: {review[:180]}...")
+        aspects = model.analyze(review)
+        if not aspects:
+            print("   ⚠️ No clear aspects detected.")
+        else:
+            for asp in aspects:
+                results_table.append({
+                    "Review #": i,
+                    "Aspect": asp.aspect,
+                    "Sentiment": asp.sentiment,
+                    "Confidence": asp.confidence
+                })
+                print(f"   ➜ {asp.aspect:<15} | {asp.sentiment:<8} | conf={asp.confidence}")
