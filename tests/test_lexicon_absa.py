@@ -55,14 +55,16 @@ def test_multiple_aspects(model):
     assert aspects.get("service", "") == "negative" or "negative" in aspects.values()
 
 
-def test_food_and_ambience(model):
-    text = "The food was great and the atmosphere was cozy."
+def test_mixed_sentiment(model):
+    """
+    Mixed sentiments within one sentence should produce distinct aspect polarities.
+    """
+    text = "The ambiance was amazing but the food was bland."
     result = model.analyze(text)
     aspects = {r.aspect: r.sentiment for r in result}
 
-    assert any("food" in a for a in aspects)
-    assert any("atmosphere" in a for a in aspects)
-    assert all(s == "positive" for s in aspects.values())
+    assert "ambiance" in aspects and aspects["ambiance"] == "positive"
+    assert "food" in aspects and aspects["food"] == "negative"
 
 
 def test_compound_aspect(model):
@@ -133,3 +135,36 @@ def test_overall_sentiment(model):
     assert any("drinks" in a for a in aspects)
     assert any("overall" in a for a in aspects)
     assert aspects["overall"] == "positive"
+
+def test_negation_scope(model):
+    """
+    Negation should only affect the correct clause, not unrelated tokens.
+    """
+    text = "The buffet is fresh and never disappoints."
+    result = model.analyze(text)
+    aspects = {r.aspect: r.sentiment for r in result}
+
+    assert "buffet" in aspects and aspects["buffet"] == "positive"
+
+
+def test_positive_adj(model):
+    """
+    Simple adjective modifiers should be correctly labeled as positive.
+    """
+    text = "The staff are friendly."
+    result = model.analyze(text)
+    aspects = {r.aspect: r.sentiment for r in result}
+
+    assert "staff" in aspects and aspects["staff"] == "positive"
+
+
+def test_not_bad(model):
+    """
+    'Not bad' should yield a mildly positive sentiment.
+    """
+    text = "The food was not bad."
+    result = model.analyze(text)
+    aspects = {r.aspect: r.sentiment for r in result}
+
+    assert "food" in aspects and aspects["food"] == "positive"
+

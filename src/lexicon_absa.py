@@ -27,6 +27,18 @@ CUSTOM_SENTIMENT = {
     "terrible": -0.7, "awful": -0.7, "horrible": -0.7, "bland": -0.5
 }
 
+# -----------------------------------------------------------
+# Common multi-word phrases (scored before token-only logic)
+# -----------------------------------------------------------
+PHRASE_OVERRIDES = {
+    "never disappoints": 0.7,
+    "not bad": 0.4,
+    "no complaints": 0.4,
+    "not good": -0.4,
+    "far from good": -0.6,
+    "nothing special": -0.3,
+}
+
 
 # -----------------------------------------------------------
 # Configuration
@@ -34,11 +46,11 @@ CUSTOM_SENTIMENT = {
 @dataclass
 class LexiconABSAConfig:
     model: str = "en_core_web_sm"
-    proximity_radius: int = 0          # 0 = disabled; only used if no DEP
-    opinion_min_abs: float = 0.08      # lower threshold to catch subtler opinions
-    pos_th: float = 0.05
-    neg_th: float = -0.05
-    overall_aspect: Optional[str] = "overall"  # optional fallback aspect
+    proximity_radius: int = 0           # (kept for compatibility; unused now)
+    opinion_min_abs: float = 0.10       # was 0.08
+    pos_th: float = 0.12                # was 0.05
+    neg_th: float = -0.12               # was -0.05
+    overall_aspect: Optional[str] = "overall"
 
 
 # -----------------------------------------------------------
@@ -49,6 +61,8 @@ class LexiconABSA(ABSAAnalyzer):
         self.cfg = cfg or LexiconABSAConfig()
         self.analyzer = SentimentIntensityAnalyzer()
         self._nlp = nlp or self._load_nlp(self.cfg.model)
+        # ephemeral store for phrase-level scores per analyze() call
+        self._phrase_scores: Dict[int, float] = {}
 
     @staticmethod
     def _load_nlp(model: str) -> Language:
@@ -60,157 +74,177 @@ class LexiconABSA(ABSAAnalyzer):
                 nlp.add_pipe("sentencizer")
             return nlp
 
+    # ---------- NEW: small helper for phrase sentiment ----------
+    def _span_sentiment(self, text: str) -> float:
+        # exact phrase override first
+        t = text.lower().strip()
+        if t in PHRASE_OVERRIDES:
+            return PHRASE_OVERRIDES[t]
+        return self.analyzer.polarity_scores(text)["compound"]
+
     def _extract_aspects(self, doc):
-        """Extract aspects with sentence IDs"""
         aspects = {}
         sent_index_by_token = {}
-
         try:
             for s_i, sent in enumerate(doc.sents):
                 for tok in sent:
                     sent_index_by_token[tok.i] = s_i
         except ValueError:
-            # No sentence segmentation
             for tok in doc:
                 sent_index_by_token[tok.i] = 0
 
         base = extract_aspects_spacy(doc)
         for i, (text, span) in base.items():
             aspects[i] = (text, span, sent_index_by_token.get(i, 0))
-
         return aspects
 
     def _opinion_score(self, token_text: str) -> float:
-        """Get opinion score with custom overrides"""
         word = token_text.lower()
         if word in CUSTOM_SENTIMENT:
             return CUSTOM_SENTIMENT[word]
         return self.analyzer.polarity_scores(token_text)["compound"]
 
+    # ---------- FIXED: no more arbitrary window; clause-aware ----------
     def _apply_modifiers(self, token, raw_score: float) -> float:
-        """Apply intensity modifiers and negation"""
-        score = raw_score
-        doc = token.doc
-        window = 3
-        left_i = max(0, token.i - window)
-        right_i = min(len(doc), token.i + window + 1)
-        neighbors = [t for t in doc[left_i:right_i] if t.i != token.i]
+        score = float(raw_score)
 
-        # Apply intensifiers/diminishers first
+        # work within the same sentence
+        try:
+            sent = token.sent
+        except Exception:
+            sent = token.doc[:]
+
+        # intensifiers/diminishers: prefer syntactic scope (advmod on the opinion)
         factor = 1.0
-        for t in neighbors + list(token.children):
-            lt = t.lower_
-            if lt in INTENSIFIERS:
-                factor *= INTENSIFIERS[lt]
-            elif lt in DIMINISHERS:
-                factor *= DIMINISHERS[lt]
-
+        for ch in token.children:
+            if ch.dep_ == "advmod":
+                lt = ch.lower_
+                if lt in INTENSIFIERS:
+                    factor *= INTENSIFIERS[lt]
+                elif lt in DIMINISHERS:
+                    factor *= DIMINISHERS[lt]
         score *= factor
         score = max(-1.0, min(1.0, score))
 
-        # Check for negation
+        # negation: only if attached to the opinion or its copular head, not any neighbor
         def is_negator(t):
-            return t.lower_ in NEGATIONS or t.dep_ == "neg"
+            return t.dep_ == "neg" or t.lower_ in NEGATIONS
 
         negated = any(is_negator(ch) for ch in token.children)
+
+        # copular/adjectival complement cases: "buffet is fresh", "staff are friendly"
         if not negated:
-            negated = any(is_negator(t) for t in neighbors)
-        if not negated and token.head and token.head.dep_ in {"cop", "aux", "auxpass"}:
-            negated = any(is_negator(ch) for ch in token.head.children)
+            head = token.head
+            if head is not None and head.dep_ in {"acomp", "attr"}:
+                # the verb governing the copular structure
+                gov = head.head
+                if gov is not None:
+                    negated = any(is_negator(ch) for ch in gov.children)
 
+        # negation effect: valence-sensitive
         if negated:
-            score *= -1
+            if score < 0:
+                score = -score * 0.9   # "not bad" -> mildly positive
+            else:
+                score = -score * 0.5   # "not good" -> mildly negative
 
-        return score
+        return max(-1.0, min(1.0, score))
 
     def _is_opinion_verb(self, tok) -> bool:
-        """Check if verb expresses opinion"""
         return tok.lemma_.lower() in {
             "love", "like", "enjoy", "recommend", "prefer",
             "hate", "dislike", "appreciate", "adore"
         }
 
-    def _find_aspect_opinions_in_sent(
-            self, sent, aspects_in_sent: Set[int], doc, aspects_idx
-    ) -> List[Tuple[int, int]]:
-        """Find (aspect_idx, opinion_idx) pairs in sentence"""
+    # Build short verb phrase like "never disappoints", "really shines"
+    def _build_verb_phrase(self, verb) -> str:
+        parts = []
+        # include explicit negation and adverbial modifiers closest to the verb
+        negs = [c.text for c in verb.children if c.dep_ == "neg"]
+        advs = [c.text for c in verb.children if c.dep_ == "advmod"]
+        # prefer ordering with negation first (e.g., "never disappoints")
+        parts.extend(negs + advs + [verb.text])
+        phrase = " ".join(parts) if parts else verb.text
+        return phrase
+
+    def _find_aspect_opinions_in_sent(self, sent, aspects_in_sent: Set[int], doc, aspects_idx) -> List[Tuple[int, int]]:
         pairs = []
 
-        def add(a_i, o_i):
+        def add(a_i, o_i, phrase: Optional[str] = None):
             if a_i is not None and o_i is not None:
                 pairs.append((a_i, o_i))
+                if phrase:
+                    # store phrase-level sentiment for this opinion token index
+                    self._phrase_scores[o_i] = self._span_sentiment(phrase)
 
         for tok in sent:
-            # Pattern 1: amod (adjective modifier)
-            # "delicious cake"
-            if tok.dep_ == "amod" and tok.head.i in aspects_in_sent:
+            # Pattern 1: amod (adjective modifier) — "delicious cake"
+            if tok.dep_ == "amod" and tok.head.i in aspects_in_sent and tok.pos_ == "ADJ":
                 add(tok.head.i, tok.i)
 
-            # Pattern 2: acomp (adjectival complement)
-            # "cake was delicious"
+            # Pattern 2: acomp — "cake was delicious"
             elif tok.dep_ == "acomp" and tok.pos_ == "ADJ":
                 for c in tok.head.children:
                     if c.dep_ in {"nsubj", "nsubjpass"} and c.i in aspects_in_sent:
                         add(c.i, tok.i)
 
-            # Pattern 3: nsubj with adjectival complement
-            # "risotto was perfection"
+            # Pattern 3: nsubj + attr/acomp — "risotto was perfection"
             elif tok.dep_ in {"nsubj", "nsubjpass"} and tok.i in aspects_in_sent:
                 for ch in tok.head.children:
                     if ch.dep_ in {"acomp", "attr"} and ch.pos_ in {"ADJ", "NOUN"}:
                         add(tok.i, ch.i)
 
-            # Pattern 4: Opinion verb with direct object
-            # "loved the cake"
+            # Pattern 4: opinion verb dobj — "loved the cake"
             elif tok.dep_ == "dobj" and tok.i in aspects_in_sent:
                 if tok.head.pos_ == "VERB" and self._is_opinion_verb(tok.head):
                     add(tok.i, tok.head.i)
 
-            # Pattern 5: Prepositional object
-            # "great for families"
+            # Pattern 5: pobj with adjectival ancestor — "great for families"
             elif tok.dep_ == "pobj" and tok.i in aspects_in_sent:
                 for anc in tok.ancestors:
                     if anc.pos_ == "ADJ":
                         add(tok.i, anc.i)
                         break
 
-            # Pattern 6: Coordinated adjectives
-            # "cozy and beautiful"
+            # Pattern 6: coordinated adjectives — "cozy and beautiful"
             elif tok.dep_ == "conj" and tok.pos_ == "ADJ":
-                if tok.head.dep_ in {"acomp", "amod"}:
-                    # Find the subject
-                    if tok.head.dep_ == "amod" and tok.head.head.i in aspects_in_sent:
-                        add(tok.head.head.i, tok.i)
-                    elif tok.head.dep_ == "acomp":
-                        for subj in tok.head.head.children:
-                            if subj.dep_ in {"nsubj", "nsubjpass"} and subj.i in aspects_in_sent:
-                                add(subj.i, tok.i)
+                if tok.head.dep_ == "amod" and tok.head.head.i in aspects_in_sent:
+                    add(tok.head.head.i, tok.i)
+                elif tok.head.dep_ == "acomp":
+                    for subj in tok.head.head.children:
+                        if subj.dep_ in {"nsubj", "nsubjpass"} and subj.i in aspects_in_sent:
+                            add(subj.i, tok.i)
 
-            # Pattern 7: Relative clause
-            # "cake which was divine"
+            # Pattern 7: relative clause — "cake which was divine"
             elif tok.dep_ == "acomp" and tok.head.dep_ == "relcl":
                 for anc in tok.head.ancestors:
                     if anc.pos_ in {"NOUN", "PROPN"} and anc.i in aspects_in_sent:
                         add(anc.i, tok.i)
                         break
 
+            # ---------- NEW Pattern 8: verb with subject aspect — "buffet never disappoints" ----------
+            if tok.pos_ == "VERB":
+                subj = next((c for c in tok.children if c.dep_ in {"nsubj", "nsubjpass"} and c.i in aspects_in_sent), None)
+                if subj is not None:
+                    phrase = self._build_verb_phrase(tok)  # e.g., "never disappoints"
+                    add(subj.i, tok.i, phrase=phrase)
+
         return pairs
 
     def analyze(self, text: str) -> List[AspectSentiment]:
-        """Main analysis method"""
         doc = self._nlp(text)
         aspects_idx = self._extract_aspects(doc)
 
-        # Group aspects by sentence
+        # reset per-call phrase store
+        self._phrase_scores = {}
+
         by_sent: Dict[int, Set[int]] = {}
         for a_i, (_, _, s_id) in aspects_idx.items():
             by_sent.setdefault(s_id, set()).add(a_i)
 
-        # Aggregate scores
         agg_by_aspect: Dict[str, float] = {}
         hits_by_aspect: Dict[str, int] = {}
 
-        # Process each sentence
         try:
             sentences = list(doc.sents)
         except ValueError:
@@ -218,35 +252,33 @@ class LexiconABSA(ABSAAnalyzer):
 
         for s_id, sent in enumerate(sentences):
             aspects_in_sent = by_sent.get(s_id, set())
-
             if not aspects_in_sent:
                 continue
 
-            # Find opinion-aspect pairs
             if doc.has_annotation("DEP"):
                 pairs = self._find_aspect_opinions_in_sent(sent, aspects_in_sent, doc, aspects_idx)
             else:
                 pairs = []
 
-            # Score each pair
             for a_i, o_i in pairs:
                 a_text = aspects_idx[a_i][0]
                 op_tok = doc[o_i]
 
-                raw = self._opinion_score(op_tok.text)
+                # prefer phrase-level sentiment if we built one (e.g., "never disappoints")
+                if o_i in self._phrase_scores:
+                    raw = self._phrase_scores[o_i]
+                else:
+                    raw = self._opinion_score(op_tok.text)
 
-                # Only process if opinion is strong enough
                 if abs(raw) >= self.cfg.opinion_min_abs:
                     score = self._apply_modifiers(op_tok, raw)
                     agg_by_aspect[a_text] = agg_by_aspect.get(a_text, 0.0) + score
                     hits_by_aspect[a_text] = hits_by_aspect.get(a_text, 0) + 1
 
-        # Build results
         results = []
         for a_i, (a_text, span, _) in aspects_idx.items():
             total = agg_by_aspect.get(a_text, 0.0)
             count = hits_by_aspect.get(a_text, 0)
-
             if count == 0:
                 continue
 
@@ -262,11 +294,9 @@ class LexiconABSA(ABSAAnalyzer):
                     text_span=span
                 )
             )
-
         return results
 
 if __name__ == "__main__":
-    import pandas as pd
 
     analyzer = LexiconABSA(LexiconABSAConfig(overall_aspect=None))
 
@@ -292,9 +322,3 @@ if __name__ == "__main__":
         else:
             for asp in aspects:
                 print(f"   ➜ {asp.aspect:<25} | {asp.sentiment:<10} | conf={asp.confidence:.2f}")
-
-    # analyzer = LexiconABSA(LexiconABSAConfig(overall_aspect=None))
-    # text = """Oh perfect, another burnt pizza. Amazing job."""
-    # results = analyzer.analyze(text)
-    # for r in results:
-    #     print(f"{r.aspect:<20} | {r.sentiment:<8} | conf={r.confidence:.2f}")

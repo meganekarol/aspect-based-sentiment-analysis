@@ -15,7 +15,7 @@ from typing import List, Tuple
 from transformers import pipeline, AutoTokenizer, AutoModelForSequenceClassification
 import torch
 
-from base import ABSAAnalyzer, AspectSentiment
+from src.base import ABSAAnalyzer, AspectSentiment
 
 
 # ------------------------------------------------------------
@@ -78,8 +78,8 @@ class TransformerABSA(ABSAAnalyzer):
         inputs = self.sentiment_tokenizer(
             text,
             aspect,
-            truncation=True,
             max_length=512,
+            truncation=True,
             padding=True,
             return_tensors="pt"
         )
@@ -156,10 +156,3 @@ if __name__ == "__main__":
         else:
             for asp in aspects:
                 print(f"   ➜ {asp.aspect:<25} | {asp.sentiment:<10} | conf={asp.confidence:.2f}")
-
-    # analyzer = TransformerABSA()
-    # text = """Oh perfect, another burnt pizza. Amazing job."""
-    # results = analyzer.analyze(text)
-    # for r in results:
-    #     print(f"{r.aspect:<20} | {r.sentiment:<8} | conf={r.confidence:.2f}")
-
