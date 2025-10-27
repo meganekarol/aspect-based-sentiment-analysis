@@ -1,3 +1,5 @@
+import warnings
+
 import pandas as pd
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Set, Tuple
@@ -45,12 +47,11 @@ PHRASE_OVERRIDES = {
 # -----------------------------------------------------------
 @dataclass
 class LexiconABSAConfig:
+    """Configuration for the Lexicon-Based ABSA analyzer."""
     model: str = "en_core_web_sm"
-    proximity_radius: int = 0           # (kept for compatibility; unused now)
-    opinion_min_abs: float = 0.10       # was 0.08
-    pos_th: float = 0.12                # was 0.05
-    neg_th: float = -0.12               # was -0.05
-    overall_aspect: Optional[str] = "overall"
+    opinion_min_abs: float = 0.10
+    pos_th: float = 0.12
+    neg_th: float = -0.12
 
 
 # -----------------------------------------------------------
@@ -61,60 +62,52 @@ class LexiconABSA(ABSAAnalyzer):
         self.cfg = cfg or LexiconABSAConfig()
         self.analyzer = SentimentIntensityAnalyzer()
         self._nlp = nlp or self._load_nlp(self.cfg.model)
-        # ephemeral store for phrase-level scores per analyze() call
         self._phrase_scores: Dict[int, float] = {}
 
     @staticmethod
     def _load_nlp(model: str) -> Language:
+        """
+        Load a spaCy model with POS and dependency parsing capabilities.
+
+        Falls back to `spacy.blank("en")` with a sentencizer if the model is
+        unavailable, issuing a warning that this limits performance.
+        """
         try:
-            return spacy.load(model)
-        except Exception:
+            nlp = spacy.load(model)
+            return nlp
+        except Exception as e:
+            warnings.warn(
+                f"[LexiconABSA] Could not load spaCy model '{model}': {e}\n"
+                "Falling back to a blank English pipeline (no POS/DEP). "
+                "Install 'en_core_web_sm' for full functionality:\n"
+                "  python -m spacy download en_core_web_sm",
+                UserWarning
+            )
             nlp = spacy.blank("en")
             if "sentencizer" not in nlp.pipe_names:
                 nlp.add_pipe("sentencizer")
             return nlp
 
-    # ---------- NEW: small helper for phrase sentiment ----------
-    def _span_sentiment(self, text: str) -> float:
-        # exact phrase override first
-        t = text.lower().strip()
-        if t in PHRASE_OVERRIDES:
-            return PHRASE_OVERRIDES[t]
-        return self.analyzer.polarity_scores(text)["compound"]
-
-    def _extract_aspects(self, doc):
-        aspects = {}
-        sent_index_by_token = {}
-        try:
-            for s_i, sent in enumerate(doc.sents):
-                for tok in sent:
-                    sent_index_by_token[tok.i] = s_i
-        except ValueError:
-            for tok in doc:
-                sent_index_by_token[tok.i] = 0
-
-        base = extract_aspects_spacy(doc)
-        for i, (text, span) in base.items():
-            aspects[i] = (text, span, sent_index_by_token.get(i, 0))
-        return aspects
-
-    def _opinion_score(self, token_text: str) -> float:
-        word = token_text.lower()
-        if word in CUSTOM_SENTIMENT:
-            return CUSTOM_SENTIMENT[word]
-        return self.analyzer.polarity_scores(token_text)["compound"]
-
-    # ---------- FIXED: no more arbitrary window; clause-aware ----------
+    # -----------------------------------------------------------
+    # Sentiment Modifiers
+    # -----------------------------------------------------------
     def _apply_modifiers(self, token, raw_score: float) -> float:
+        """
+        Adjust sentiment score based on intensifiers, diminishers, and negations.
+
+        Patterns handled:
+        - **advmod intensifiers/diminishers** (e.g., "very good", "slightly bad")
+        - **negations** attached to the opinion token or its copular head
+        - Polarity-sensitive inversion (e.g., "not bad" → mildly positive)
+        """
         score = float(raw_score)
 
-        # work within the same sentence
         try:
             sent = token.sent
         except Exception:
             sent = token.doc[:]
 
-        # intensifiers/diminishers: prefer syntactic scope (advmod on the opinion)
+        # Intensifiers/diminishers via advmod
         factor = 1.0
         for ch in token.children:
             if ch.dep_ == "advmod":
@@ -126,27 +119,26 @@ class LexiconABSA(ABSAAnalyzer):
         score *= factor
         score = max(-1.0, min(1.0, score))
 
-        # negation: only if attached to the opinion or its copular head, not any neighbor
+        # Negation handling
         def is_negator(t):
             return t.dep_ == "neg" or t.lower_ in NEGATIONS
 
         negated = any(is_negator(ch) for ch in token.children)
 
-        # copular/adjectival complement cases: "buffet is fresh", "staff are friendly"
+        # Copular/adjectival complements (e.g., "buffet is fresh")
         if not negated:
             head = token.head
             if head is not None and head.dep_ in {"acomp", "attr"}:
-                # the verb governing the copular structure
                 gov = head.head
                 if gov is not None:
                     negated = any(is_negator(ch) for ch in gov.children)
 
-        # negation effect: valence-sensitive
+        # Valence-aware negation flip
         if negated:
             if score < 0:
-                score = -score * 0.9   # "not bad" -> mildly positive
+                score = -score * 0.9
             else:
-                score = -score * 0.5   # "not good" -> mildly negative
+                score = -score * 0.5
 
         return max(-1.0, min(1.0, score))
 
@@ -168,6 +160,19 @@ class LexiconABSA(ABSAAnalyzer):
         return phrase
 
     def _find_aspect_opinions_in_sent(self, sent, aspects_in_sent: Set[int], doc, aspects_idx) -> List[Tuple[int, int]]:
+        """
+        Identify (aspect, opinion) pairs in a sentence using dependency relations.
+
+        Patterns handled:
+        1. **amod** — adjectival modifier ("delicious cake")
+        2. **acomp** — adjectival complement ("cake was delicious")
+        3. **attr/acomp + nsubj** — copular structures ("risotto was perfection")
+        4. **opinion verbs** — ("loved the cake")
+        5. **pobj + adjectival ancestor** — ("great for families")
+        6. **coordinated adjectives** — ("cozy and beautiful")
+        7. **relative clauses** — ("cake which was divine")
+        8. **verb with aspect subject** — ("buffet never disappoints")
+        """
         pairs = []
 
         def add(a_i, o_i, phrase: Optional[str] = None):
