@@ -54,34 +54,6 @@ htmlcov/
 
 # -----------------------------
 
-# Data and model files
-
-# -----------------------------
-
-# Avoid committing large data or model files
-
-data/
-
-*.csv
-
-*.tsv
-
-*.jsonl
-
-*.json
-
-*.xlsx
-
-*.pkl
-
-*.joblib
-
-*.bin
-
-*.pt
-
-*.ckpt
-
 # Hugging Face or Ollama cached models
 
 ~/.cache/
