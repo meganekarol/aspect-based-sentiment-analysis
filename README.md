@@ -35,8 +35,8 @@ project/
 ├── requirements.txt
 ├── data/
 │ ├── yelp_sample_20k.json
-│ ├── yelp_domain_lexicon.json
-│ └── test_samples.json
+│ ├── yelp_academic_dataset_review.json
+│ 
 ├── src/
 │ ├── base.py
 │ ├── lexicon_absa.py
@@ -48,7 +48,8 @@ project/
 │ └── comparison.ipynb
 └── tests/
 ├── test_lexicon_absa.py
-└── test_transformer_absa.py
+└── test_transformer_absa.py 
+└── test_llama_absa.py
 
 ---
 
@@ -94,30 +95,25 @@ pip install sentencepiece protobuf
 
 ## Usage Examples
 ### 1. LexiconABSA (Rule-Based Approach)
-```python
-from src.lexicon_absa import LexiconABSA
-
-model = LexiconABSA()
+```bash
+model = LexiconABSA(LexiconABSAConfig())
 text = "The food was great but the service was slow."
 results = model.analyze(text)
-
 for r in results:
-    print(r.aspect, r.sentiment, r.confidence)
+    print(f"   ➜ {r.aspect:<20} | {r.sentiment:<10} | conf={r.confidence:.2f}")
 ```
 Output:
 ```
-food positive 0.75
-service negative 0.65
+➜ food      | positive   | conf=0.46
+➜ service   | negative   | conf=0.38
 ```
 ### 2. TransformerABSA (Pre-trained Model Approach)
-```python
-from src.transformer_absa import TransformerABSA
-
-model = TransformerABSA()
-text = "The mushroom risotto was perfection, but the service was slow. The atmosphere was cozy."
-for r in model.analyze(text):
-    print(r)
-
+```bash
+model = TransformerABSA(TransformerABSAConfig())
+text = "The mushroom risotto was perfection, but the service was slow. The atmosphere was cozy"
+results = model.analyze(text)
+for r in results:
+    print(f"   ➜ {r.aspect:<20} | {r.sentiment:<10} | conf={r.confidence:.2f}")
 ```
 Output:
 ```
@@ -128,8 +124,7 @@ price negative 0.83
 ### 3. LLMABSA (Large Language Model Approach)
 Make sure Ollama is running
 ``` 
-ollama pull llama3
-ollama serve
+ollama run llama3
 ```
 ```python
 from src.llm_absa import LLMABSA
@@ -147,7 +142,7 @@ price negative 0.83
 Each implementation has its own test file under /tests:
 - test_lexicon_absa.py 
 - test_transformer_absa.py 
-- test_llm_absa.py
+- test_llama_absa.py
 
 Run all tests
 ``` 
@@ -185,7 +180,7 @@ class ABSAAnalyzer:
 ```
 
 ## Design Decisions & Rationale
-
+- 
 
 
 ## References

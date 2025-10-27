@@ -153,3 +153,11 @@ Rules:
         if start == -1:
             return None
         return (start, start + len(aspect))
+
+if __name__ == "__main__":
+    model = LLMABSA(model_name="llama3", max_aspects=8)
+    text = "The coffee was bitter and cold. However, the baristas were very friendly."
+    results = model.analyze(text)
+
+    for r in results:
+        print(f"   ➜ {r.aspect:<20} | {r.sentiment:<10} | conf={r.confidence:.2f}")

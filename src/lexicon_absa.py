@@ -328,27 +328,9 @@ class LexiconABSA(ABSAAnalyzer):
 
 if __name__ == "__main__":
 
-    analyzer = LexiconABSA(LexiconABSAConfig())
+    model = LexiconABSA(LexiconABSAConfig())
+    text = "The food was great but the service was slow."
+    results = model.analyze(text)
 
-    reviews = [
-  "Absolutely incredible experience! The staff went above and beyond to make our anniversary dinner special. The mushroom risotto was perfection, and don't even get me started on the chocolate lava cake. Worth every penny!",
-  "Really wanted to love this place based on all the hype, but left disappointed. Service was slow even though it wasn't busy, and my steak was overcooked despite ordering medium-rare. The ambiance was nice though.",
-  "Great spot for brunch! The avocado toast was fresh and flavorful. Only complaint is that it gets pretty noisy when it's crowded, making conversation difficult. Would definitely come back on a weekday.",
-  "Worst dining experience in years. Found a hair in my soup and when I told the server, they barely apologized. Manager never even came to our table. Will not be returning.",
-  "Hidden gem! This little family-owned restaurant has the most authentic cuisine I've tasted outside of Italy. The owner came out and chatted with us about the recipes. Felt like eating at a friend's house. Can't recommend enough!",
-  "It's okay. Nothing special but nothing terrible either. Prices are reasonable for the portion sizes. Good option if you're in the area and hungry, but I wouldn't go out of my way to come here.",
-  "Love the vibe here! Super cozy atmosphere with dim lighting and great music. The cocktails are creative and strong. Food was solid - the Brussels sprouts appetizer was a standout. Lost a star because wait times can be long on weekends.",
-  "Best pizza in town, hands down. The crust is perfectly crispy, and they don't skimp on toppings. Been coming here for three years and it's consistently excellent. The garlic knots are also addictive!",
-  "Overpriced for what you get. My salad was $18 and mostly iceberg lettuce with a few toppings. The server seemed annoyed when we asked questions about the menu. Expected better based on the reviews.",
-  "Solid neighborhood spot with a great happy hour! Wings are crispy and saucy, and the beer selection is impressive. Can get crowded during games, but that's part of the fun. Parking can be tricky though."
-]
-
-    for i, review in enumerate(reviews, 1):
-        print(f"\nReview {i}: {review}\n")
-        aspects = analyzer.analyze(review)
-
-        if not aspects:
-            print("  No clear aspects detected.")
-        else:
-            for asp in aspects:
-                print(f"   ➜ {asp.aspect:<25} | {asp.sentiment:<10} | conf={asp.confidence:.2f}")
+    for r in results:
+        print(f"   ➜ {r.aspect:<20} | {r.sentiment:<10} | conf={r.confidence:.2f}")
