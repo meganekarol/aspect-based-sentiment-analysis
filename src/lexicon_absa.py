@@ -41,7 +41,6 @@ PHRASE_OVERRIDES = {
     "nothing special": -0.3,
 }
 
-
 # -----------------------------------------------------------
 # Configuration
 # -----------------------------------------------------------
@@ -88,6 +87,32 @@ class LexiconABSA(ABSAAnalyzer):
                 nlp.add_pipe("sentencizer")
             return nlp
 
+    def _span_sentiment(self,text: str) -> float:
+        t = text.lower().strip()
+        if t in PHRASE_OVERRIDES:
+            return PHRASE_OVERRIDES[t]
+        return self.analyzer.polarity_scores(text)["compound"]
+
+    def _extract_aspects(self, doc):
+        aspects = {}
+        sent_index_by_token = {}
+        try:
+            for s_i, sent in enumerate(doc.sents):
+                for tok in sent:
+                    sent_index_by_token[tok.i] = s_i
+        except ValueError:
+            for tok in doc:
+                sent_index_by_token[tok.i] = 0
+        base = extract_aspects_spacy(doc)
+        for i, (text, span) in base.items():
+            aspects[i] = (text, span, sent_index_by_token.get(i, 0))
+        return aspects
+
+    def _opinion_score(self, token_text: str) -> float:
+        word = token_text.lower()
+        if word in CUSTOM_SENTIMENT:
+            return CUSTOM_SENTIMENT[word]
+        return self.analyzer.polarity_scores(token_text)["compound"]
     # -----------------------------------------------------------
     # Sentiment Modifiers
     # -----------------------------------------------------------
@@ -227,7 +252,7 @@ class LexiconABSA(ABSAAnalyzer):
                         add(anc.i, tok.i)
                         break
 
-            # ---------- NEW Pattern 8: verb with subject aspect — "buffet never disappoints" ----------
+            # Pattern 8: verb with subject aspect — "buffet never disappoints"
             if tok.pos_ == "VERB":
                 subj = next((c for c in tok.children if c.dep_ in {"nsubj", "nsubjpass"} and c.i in aspects_in_sent), None)
                 if subj is not None:
@@ -303,7 +328,7 @@ class LexiconABSA(ABSAAnalyzer):
 
 if __name__ == "__main__":
 
-    analyzer = LexiconABSA(LexiconABSAConfig(overall_aspect=None))
+    analyzer = LexiconABSA(LexiconABSAConfig())
 
     reviews = [
   "Absolutely incredible experience! The staff went above and beyond to make our anniversary dinner special. The mushroom risotto was perfection, and don't even get me started on the chocolate lava cake. Worth every penny!",
