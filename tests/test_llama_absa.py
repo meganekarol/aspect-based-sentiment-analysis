@@ -1,10 +1,9 @@
 import json
-import pytest
 from unittest.mock import patch
 from src.llm_absa import LLMABSA
 from src.base import AspectSentiment
 
-
+# Code Reference: The Code was generated with the help of ChatGpt
 # ---------------------------------------------------------------------
 # Helper: mock responses from Ollama
 # ---------------------------------------------------------------------

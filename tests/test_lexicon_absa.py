@@ -5,6 +5,8 @@ Covers:
   • Simple cases (clear sentiment, single aspect)
   • Complex cases (multiple aspects, mixed sentiments)
   • Edge cases (negation, sarcasm, compound aspects)
+
+  Code Reference: The Code was generated with the help of ChatGpt
 """
 
 import pytest

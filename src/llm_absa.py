@@ -8,6 +8,8 @@ Features:
 - Few-shot prompt for stable ABSA behavior
 - Confidence and text span estimation
 - Unified API: returns List[AspectSentiment]
+
+Code Reference: The Code was generated with the help of ChatGpt
 """
 import json
 import time

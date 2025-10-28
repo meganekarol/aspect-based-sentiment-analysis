@@ -9,6 +9,8 @@ Key Features:
 - Exception-safe model loading
 - Clear docstrings for maintainability
 - Consistent API with LexiconABSA and other analyzers
+
+Code Reference: The Code was generated with the help of ChatGpt
 """
 
 from dataclasses import dataclass

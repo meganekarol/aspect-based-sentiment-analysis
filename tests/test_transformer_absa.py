@@ -9,6 +9,8 @@ Covers:
     • Simple cases (single aspect)
     • Complex cases (multiple aspects)
     • Edge cases (negation, sarcasm, implicit sentiment)
+
+Code Reference: The Code was generated with the help of ChatGpt
 """
 
 import pytest

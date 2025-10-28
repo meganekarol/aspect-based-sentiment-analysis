@@ -191,7 +191,7 @@ class ABSAAnalyzer:
   During model exploration:
   - `yangheng/deberta-v3-base-end2end-absa` was strong at **aspect extraction** but weaker in sentiment labeling.  
   - `yangheng/deberta-v3-base-absa-v1.1` excelled in **sentiment classification** but did not extract aspects automatically.  
-  The solution was to **hybridize both models** — one to detect aspects, the other to classify their sentiment — achieving higher precision and recall together.
+  The solution was to **hybridize both models** one to detect aspects, the other to classify their sentiment achieving higher precision and recall together.
 
 - **Exception-Safe Loading:**  
   Implemented try–except logic for model initialization to handle missing or incompatible Hugging Face models gracefully.
@@ -232,7 +232,7 @@ class ABSAAnalyzer:
 
 ## Responsible Use of AI Tools
 
-This project was developed with the support of AI-assisted tools (e.g., ChatGPT) for:
+This project was developed with the support of AI-assisted tools (ChatGPT,Perplexity) for:
 - Code generation and debugging support  
 - Documentation structuring and explanation drafting  
 

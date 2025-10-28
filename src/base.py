@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 from typing import List, Tuple
 
+# Code Reference: The Code was copied from project description
 @dataclass
 class AspectSentiment:
     aspect: str # The aspect/feature mentioned

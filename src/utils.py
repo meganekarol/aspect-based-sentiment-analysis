@@ -1,9 +1,10 @@
 """
-utils.py — Shared helpers for ABSA implementations
 Includes:
  - Aspect extraction with spaCy
  - Sentiment helper constants (negations, intensifiers, etc.)
  - Confidence + label utilities
+
+ Code Reference: The Code was generated with the help of ChatGpt
 """
 from typing import Dict, Tuple, List
 import math

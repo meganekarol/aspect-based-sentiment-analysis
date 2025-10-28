@@ -1,6 +1,16 @@
+"""
+Implementation 1 — Lexicon-Based Approach with spaCy
+------------------------------------------------
+Linguistic parsing with spaCy
+Sentiment via VADER
+Focus on interpretability and speed
+Uses dependency patterns and custom lexicon
+
+Code Reference: The Code was generated with the help of ChatGpt
+"""
+
 import warnings
 
-import pandas as pd
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Set, Tuple
 import spacy
