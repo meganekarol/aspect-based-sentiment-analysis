@@ -157,7 +157,9 @@ def squash_confidence(x: float) -> float:
     """
     Squash raw sentiment score ([-1,1]) to [0,1] confidence weight.
     """
-    return round(1 / (1 + math.exp(-5 * abs(x))) - 0.5, 2)
+    result = 1 / (1 + math.exp(-5 * abs(x)))
+    confidence = (result - 0.5) * 2
+    return round(confidence,2)
 
 
 def choose_label(score: float, pos_th: float = 0.05, neg_th: float = -0.05) -> str:
