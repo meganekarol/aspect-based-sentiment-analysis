@@ -1,4 +1,4 @@
-# LLM Sentiment Project 2025  (Group 17)
+# LLM Sentiment Project 2025
 **Aspect-Based Sentiment Analysis (ABSA) System**  
 *Course: Applied Computer Science Data & AI 6*  
 *Authors: Lesly Tianga, Megane Fomo*
