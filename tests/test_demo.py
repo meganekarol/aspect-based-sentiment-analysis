@@ -1,41 +1,31 @@
-import unittest
-from src.lexicon_absa import LexiconABSA,LexiconABSAConfig
-from src.transformer_absa import TransformerABSA ,TransformerABSAConfig
-from src.llm_absa import LLMABSA
+"""Cross-model contract test: every back-end honours the shared ``ABSAAnalyzer`` API.
+
+Needs the Hugging Face models and a running Ollama server, so it is excluded
+from the default CI run (``-m "not slow and not llm"``).
+"""
+
+import pytest
+
+from absa import SENTIMENTS, AspectSentiment, get_analyzer
+
+pytestmark = [pytest.mark.slow, pytest.mark.llm]
+
+LONG_REVIEW = """
+Food was good tasting, portions felt small - especially side dishes. I guess they are trying to do
+gourmet comfort food, but something didn't mesh. It was sorta family style served, but we felt bad
+taking more than a tablespoon of any dish because there wouldn't be enough to share.
+"""
 
 
-class TestAllABSA(unittest.TestCase):
-    def setUp(self):
-        # Long review to test
-        self.long_review = """
-Food was good tasting, portions felt small -especially side dishes. I guess they are trying to do gourmet comfort food, 
-but something didn't mesh. It was sorta family style served, 
-but we felt bad taking more than a tablespoon of any dish because there 
-wouldn't be enough to share. Not sure what audience they are going for
-        """
-
-        # Initialize all analyzers
-        self.lexicon_analyzer = LexiconABSA(LexiconABSAConfig())
-        self.transformer_analyzer = TransformerABSA(TransformerABSAConfig())
-        self.llm_analyzer = LLMABSA(model_name="llama3")
-
-    def test_all_models(self):
-        analyzers = {
-            "Lexicon-based": self.lexicon_analyzer,
-            "Transformer-based": self.transformer_analyzer,
-            "LLM (Ollama)": self.llm_analyzer
-        }
-
-        for name, analyzer in analyzers.items():
-            print(f"\n--- Running {name} ABSA ---")
-            results = analyzer.analyze(self.long_review)
-            if not results:
-                print("No aspects detected.")
-            else:
-                for r in results:
-                    print(
-                        f"Aspect: {r.aspect}, Sentiment: {r.sentiment}, Confidence: {getattr(r, 'confidence', 'N/A')}")
-
-
-if __name__ == "__main__":
-    unittest.main()
+@pytest.mark.parametrize("name", ["lexicon", "transformer", "llm"])
+def test_analyzer_contract(name):
+    results = get_analyzer(name).analyze(LONG_REVIEW)
+    assert results, f"{name} found no aspects"
+    for r in results:
+        assert isinstance(r, AspectSentiment)
+        assert r.aspect.strip()
+        assert r.sentiment in SENTIMENTS
+        assert 0.0 <= r.confidence <= 1.0
+        if r.text_span is not None:
+            start, end = r.text_span
+            assert 0 <= start < end <= len(LONG_REVIEW)

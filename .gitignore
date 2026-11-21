@@ -1,0 +1,64 @@
+# Python
+__pycache__/
+*.py[cod]
+*.so
+*.egg-info/
+build/
+dist/
+
+# Virtual environments / secrets
+.env
+.venv/
+env/
+venv/
+ENV/
+
+# Test / coverage
+.coverage
+coverage.xml
+htmlcov/
+.pytest_cache/
+.ruff_cache/
+.tox/
+
+# Model caches
+hf_cache/
+models/
+transformers_cache/
+ollama_models/
+
+# Downloaded datasets (fetched by scripts/, not redistributed)
+data/semeval/
+data/yelp/
+# raw predictions contain SemEval sentence text; regenerate with scripts/benchmark.py
+results/predictions/
+
+# Jupyter
+.ipynb_checkpoints/
+*.nbconvert.ipynb
+
+# Logs / temp
+*.log
+*.tmp
+*.bak
+*.swp
+*.swo
+
+# Archives / office files
+*.docx
+*.zip
+*.tar
+*.gz
+
+# IDE / OS
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace
+.DS_Store
+.AppleDouble
+.LSOverride
+Thumbs.db
+
+# Streamlit secrets
+.streamlit/secrets.toml

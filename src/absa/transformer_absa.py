@@ -10,16 +10,15 @@ Key Features:
 - Clear docstrings for maintainability
 - Consistent API with LexiconABSA and other analyzers
 
-Code Reference: The Code was generated with the help of ChatGpt
 """
 
-from dataclasses import dataclass
-from typing import List, Tuple, Optional
-from transformers import pipeline, AutoTokenizer, AutoModelForSequenceClassification
-import torch
 import warnings
+from dataclasses import dataclass
 
-from src.base import ABSAAnalyzer, AspectSentiment
+import torch
+from transformers import AutoModelForSequenceClassification, AutoTokenizer, pipeline
+
+from absa.base import ABSAAnalyzer, AspectSentiment
 
 
 # ------------------------------------------------------------
@@ -28,6 +27,7 @@ from src.base import ABSAAnalyzer, AspectSentiment
 @dataclass
 class TransformerABSAConfig:
     """Configuration for the Transformer-based ABSA implementation."""
+
     aspect_model: str = "yangheng/deberta-v3-base-end2end-absa"
     sentiment_model: str = "yangheng/deberta-v3-base-absa-v1.1"
     sentiment_conf_threshold: float = 0.6
@@ -45,7 +45,7 @@ class TransformerABSA(ABSAAnalyzer):
     classifies sentiment for each aspect using a separate sentiment model.
     """
 
-    def __init__(self, cfg: Optional[TransformerABSAConfig] = None):
+    def __init__(self, cfg: TransformerABSAConfig | None = None):
         self.cfg = cfg or TransformerABSAConfig()
 
         # Load models safely
@@ -77,6 +77,7 @@ class TransformerABSA(ABSAAnalyzer):
                 f"  from transformers import AutoModelForTokenClassification\n"
                 f"  AutoModelForTokenClassification.from_pretrained('{self.cfg.aspect_model}')",
                 UserWarning,
+                stacklevel=2,
             )
             return None
 
@@ -97,13 +98,14 @@ class TransformerABSA(ABSAAnalyzer):
                 f"  from transformers import AutoModelForSequenceClassification\n"
                 f"  AutoModelForSequenceClassification.from_pretrained('{self.cfg.sentiment_model}')",
                 UserWarning,
+                stacklevel=2,
             )
             return None, None
 
     # --------------------------------------------------------
     # Aspect Extraction
     # --------------------------------------------------------
-    def _extract_aspects(self, text: str) -> List[Tuple[str, Tuple[int, int], float]]:
+    def _extract_aspects(self, text: str) -> list[tuple[str, tuple[int, int], float]]:
         """
         Extract aspect terms from text using a token-classification model.
 
@@ -115,24 +117,44 @@ class TransformerABSA(ABSAAnalyzer):
             Example: [("service", (12, 19), 0.95)]
         """
         if self.aspect_pipeline is None:
-            warnings.warn("[TransformerABSA] Aspect extraction model not loaded; returning empty list.")
+            warnings.warn(
+                "[TransformerABSA] Aspect extraction model not loaded; returning empty list.", stacklevel=2
+            )
             return []
 
         preds = self.aspect_pipeline(text)
-        aspects = []
-        for p in preds:
+        aspects: list[tuple[str, tuple[int, int], float]] = []
+        for p in sorted(preds, key=lambda p: p["start"]):
             if "ASP" not in p.get("entity_group", ""):
                 continue
-            aspect = p["word"].strip()
             start, end = p["start"], p["end"]
+            # SentencePiece offsets include the leading space ("▁word"); trim it.
+            while start < end and text[start].isspace():
+                start += 1
+            while end > start and text[end - 1].isspace():
+                end -= 1
+            if start == end:
+                continue
+            # Sub-word groups can stop mid-word ("staff memeber|s"); extend to word boundaries.
+            while start > 0 and text[start - 1].isalnum():
+                start -= 1
+            while end < len(text) and text[end].isalnum():
+                end += 1
             conf = float(p["score"])
-            aspects.append((aspect, (start, end), conf))
+
+            # The "simple" aggregation splits one aspect into adjacent groups when
+            # its tokens carry different polarity tags (B-ASP-Positive, I-ASP-Neutral):
+            # "outdoor" + "seating". Merge groups separated only by whitespace.
+            if aspects and not text[aspects[-1][1][1] : start].strip():
+                _, (prev_start, _), prev_conf = aspects.pop()
+                start, conf = prev_start, min(prev_conf, conf)
+            aspects.append((text[start:end], (start, end), conf))
         return aspects
 
     # --------------------------------------------------------
     # Sentiment Prediction per Aspect
     # --------------------------------------------------------
-    def _predict_sentiment(self, text: str, aspect: str) -> Tuple[str, float]:
+    def _predict_sentiment(self, text: str, aspect: str) -> tuple[str, float]:
         """
         Predict sentiment polarity for a specific aspect within a review.
 
@@ -145,16 +167,13 @@ class TransformerABSA(ABSAAnalyzer):
             Example: ("positive", 0.87)
         """
         if self.sentiment_model is None or self.sentiment_tokenizer is None:
-            warnings.warn("[TransformerABSA] Sentiment model not loaded; returning neutral by default.")
+            warnings.warn(
+                "[TransformerABSA] Sentiment model not loaded; returning neutral by default.", stacklevel=2
+            )
             return "neutral", 0.0
 
         inputs = self.sentiment_tokenizer(
-            text,
-            aspect,
-            max_length=512,
-            truncation=True,
-            padding=True,
-            return_tensors="pt"
+            text, aspect, max_length=512, truncation=True, padding=True, return_tensors="pt"
         )
 
         if self.cfg.device >= 0:
@@ -172,7 +191,7 @@ class TransformerABSA(ABSAAnalyzer):
     # --------------------------------------------------------
     # Main ABSA Pipeline
     # --------------------------------------------------------
-    def analyze(self, text: str) -> List[AspectSentiment]:
+    def analyze(self, text: str) -> list[AspectSentiment]:
         """
         Perform full ABSA analysis on input text.
 
@@ -188,7 +207,7 @@ class TransformerABSA(ABSAAnalyzer):
             List[AspectSentiment]: Aspect-sentiment predictions with confidence.
         """
         aspect_preds = self._extract_aspects(text)
-        results: List[AspectSentiment] = []
+        results: list[AspectSentiment] = []
 
         for aspect_text, span, asp_conf in aspect_preds:
             sentiment, conf = self._predict_sentiment(text, aspect_text)
@@ -213,15 +232,3 @@ class TransformerABSA(ABSAAnalyzer):
                 dedup[r.aspect] = r
 
         return list(dedup.values())
-
-
-# --------------------------------------------------------
-# Example Run
-# --------------------------------------------------------
-if __name__ == "__main__":
-    model = TransformerABSA(TransformerABSAConfig())
-    text = "The mushroom risotto was perfection, but the service was slow. The atmosphere was cozy"
-    results = model.analyze(text)
-
-    for r in results:
-        print(f"   ➜ {r.aspect:<20} | {r.sentiment:<10} | conf={r.confidence:.2f}")

@@ -1,242 +1,222 @@
-# LLM Sentiment Project 2025
-**Aspect-Based Sentiment Analysis (ABSA) System**  
-*Course: Applied Computer Science Data & AI 6*  
-*Authors: Lesly Tianga, Megane Fomo*
----
+# Aspect-Based Sentiment Analysis: rules vs. Transformers vs. LLMs
 
-## Project Overview
+[![CI](https://github.com/meganekarol/aspect-based-sentiment-analysis/actions/workflows/ci.yml/badge.svg)](https://github.com/meganekarol/aspect-based-sentiment-analysis/actions/workflows/ci.yml)
+![Python](https://img.shields.io/badge/python-3.10%20|%203.11%20|%203.12-blue)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
-This project implements a comprehensive **Aspect-Based Sentiment Analysis (ABSA)** system that identifies aspects (features) mentioned in text and determines the sentiment expressed toward each aspect.
+Finds **what** a review talks about and **how** the writer feels about each thing.
+It does this with three interchangeable approaches behind one Python API, and
+benchmarks them against the standard SemEval-2014 dataset.
 
-Unlike traditional sentiment analysis, which assigns a single polarity to an entire review, **ABSA** breaks the text into *aspect–sentiment pairs* for more fine-grained insights.
+> "The mushroom risotto was perfection, but the service was painfully slow."
+>
+> → **mushroom risotto**: positive · **service**: negative
 
-**Example:**
+Plain sentiment analysis gives this review one score ("mixed"). Aspect-based
+sentiment analysis (ABSA) gives a score for each aspect, which is what a
+restaurant owner, product team or analyst actually needs.
 
-> "The pizza was delicious but the service was terrible."
+![Demo app comparing the lexicon and Transformer models](docs/img/demo.png)
 
-| Aspect | Sentiment | Confidence |
-|---------|------------|-------------|
-| pizza   | positive   | 0.92        |
-| service | negative   | 0.87        |
+## Results
 
-The system includes **three independent implementations** of ABSA, each using a different approach and unified through a shared API:
+Evaluated on the **SemEval-2014 Task 4 restaurant test set**: 800 sentences and
+1,120 gold aspect terms. See [`scripts/benchmark.py`](scripts/benchmark.py) and the full
+[results](results/benchmark.md).
 
-| Implementation | Description | Core Technology |
-|----------------|--------------|-----------------|
-| **LexiconABSA** | Rule-based ABSA using linguistic rules and sentiment lexicons | spaCy + VADER |
-| **TransformerABSA** | Pre-trained ABSA model using Transformers | DeBERTa-v3 (Hugging Face) |
-| **LLMABSA** | Aspect–sentiment extraction using local large language models | Ollama (Llama/Mistral) |
+| Model | Pair F1 (strict) | Aspect F1 | Sentiment accuracy* | Latency (CPU) |
+|---|---|---|---|---|
+| Lexicon (spaCy + VADER) | 0.417 | 0.445 | 0.933 | **9 ms** |
+| Transformer (DeBERTa-v3) | **0.681** | **0.785** | 0.844 | 386 ms |
+| LLM (Llama 3, Ollama) | *run locally, see below* | | | |
 
----
+<sub>*Sentiment accuracy is computed only over the aspects each model found, so it
+is not comparable across models with very different recall. Pair F1 is the
+headline metric: an aspect counts only if its text matches exactly and its
+polarity is correct. Latency is the mean per sentence on a desktop CPU, with no GPU.</sub>
 
-## Project Structure
-![img.png](img.png)
----
+![Scores by model](docs/img/benchmark_scores.png)
 
-## Setup Instructions
+**What the numbers say**
 
-### 1. Download and Unzip Project
+- The **Transformer** is the most accurate overall. It finds 81% of the gold
+  aspects with the exact text.
+- The **lexicon** model is **~40x faster** and gets polarity right 93% of the time
+  *when* it finds an aspect. But it only reports aspects linked to an explicit
+  opinion word, so it misses most of them (recall 0.31) and never predicts
+  neutral.
+- Neither model handles sarcasm. Many transformer "false positives" are
+  *place*/*restaurant*, which SemEval deliberately does not annotate.
 
+Benchmarking also turned up several bugs that the unit tests had missed: negation
+handling, aspect boundaries and span offsets. Fixing them raised the lexicon
+model's pair F1 from **0.256 to 0.417**. See
+[design.md → fixes found by benchmarking](docs/design.md#fixes-found-by-benchmarking)
+and the [error analysis](docs/error_analysis.md).
+
+## Three approaches, one API
+
+```mermaid
+classDiagram
+    class ABSAAnalyzer {
+        <<abstract>>
+        +analyze(text) list~AspectSentiment~
+    }
+    class AspectSentiment {
+        aspect: str
+        sentiment: positive | negative | neutral
+        confidence: float
+        text_span: (start, end)
+    }
+    ABSAAnalyzer <|-- LexiconABSA : spaCy dependency rules + VADER
+    ABSAAnalyzer <|-- TransformerABSA : DeBERTa-v3 tagger + classifier
+    ABSAAnalyzer <|-- LLMABSA : few-shot prompted LLM (Ollama)
+    ABSAAnalyzer ..> AspectSentiment : returns
 ```
-Download the zip file and unzip in your favourite location
-cd llm-sentiment-project
-```
-### 2. Create a virtual environment
-```
-python -m venv venv
-source venv/bin/activate    # macOS / Linux
-venv\Scripts\activate       # Windows
-```
 
-### 3. Install dependencies
-```
-pip install -r requirements.txt
-```
+| | Lexicon | Transformer | LLM |
+|---|---|---|---|
+| **How** | spaCy dependency parse links aspects (noun phrases) to opinion words; VADER + a domain lexicon scores them, handling negation and intensifiers | `deberta-v3-base-end2end-absa` tags aspect spans; `deberta-v3-base-absa-v1.1` classifies the sentiment of each aspect | Few-shot prompt to a local LLM (Llama 3 via Ollama) returning strict JSON; output validated, retried on failure |
+| **Strengths** | ~10 ms on CPU, no GPU, every prediction traceable to a rule | Best accuracy; handles implicit and multi-word aspects | No training data; easy to adapt by changing the prompt |
+| **Weaknesses** | Misses aspects without an explicit opinion word; never predicts neutral | ~0.4 s/sentence on CPU, ~1.5 GB of model weights | Slowest; output varies between runs; needs an LLM server |
 
-### 4. Download NLP models
-```
+Implementation notes and design rationale: [docs/design.md](docs/design.md).
+
+## Quickstart
+
+```bash
+git clone https://github.com/meganekarol/aspect-based-sentiment-analysis.git
+cd aspect-based-sentiment-analysis
+python -m venv .venv && source .venv/bin/activate      # Windows: .venv\Scripts\activate
+
+pip install -e .                          # lexicon model only (lightweight)
+pip install -e ".[transformer,llm,demo]"  # everything
 python -m spacy download en_core_web_sm
 ```
-Optional(for TransformerABSA):
-```
-pip install sentencepiece protobuf
+
+**Python**
+
+```python
+from absa import get_analyzer
+
+model = get_analyzer("lexicon")           # or "transformer", or "llm"
+for r in model.analyze("The food was not bad, but the waiter was rude."):
+    print(r.aspect, r.sentiment, r.confidence)
+# food positive 0.84
+# waiter negative 0.94
 ```
 
-## Dependencies
-| Library                           | Purpose                                      |
-| --------------------------------- | -------------------------------------------- |
-| **spaCy**                         | Linguistic preprocessing, dependency parsing |
-| **vaderSentiment**                | Lexicon-based sentiment scoring              |
-| **transformers**                  | Pre-trained ABSA model (DeBERTa-v3)          |
-| **torch**                         | Model inference for Transformers             |
-| **ollama**                        | Local LLM-based ABSA                         |
-| **pandas / seaborn / matplotlib** | Exploratory data analysis and visualization  |
-| **pytest**                        | Unit testing framework                       |
+**Command line**
 
-## Usage Examples
-### 1. LexiconABSA (Rule-Based Approach)
 ```bash
-model = LexiconABSA(LexiconABSAConfig())
-text = "The food was great but the service was slow."
-results = model.analyze(text)
-for r in results:
-    print(f"   ➜ {r.aspect:<20} | {r.sentiment:<10} | conf={r.confidence:.2f}")
+absa analyze "The pizza was great but service was slow." --model lexicon
+absa analyze "Loved the outdoor seating!" --model transformer --json
 ```
-Output:
-```
-➜ food      | positive   | conf=0.46
-➜ service   | negative   | conf=0.38
-```
-### 2. TransformerABSA (Pre-trained Model Approach)
+
+**Demo app**
+
 ```bash
-model = TransformerABSA(TransformerABSAConfig())
-text = "The mushroom risotto was perfection, but the service was slow. The atmosphere was cozy"
-results = model.analyze(text)
-for r in results:
-    print(f"   ➜ {r.aspect:<20} | {r.sentiment:<10} | conf={r.confidence:.2f}")
-```
-Output:
-```
-   ➜ mushroom risotto     | positive   | conf=0.99
-   ➜ service              | negative   | conf=0.99
-   ➜ atmosphere           | positive   | conf=1.00
+streamlit run app/streamlit_app.py
 ```
 
-### 3. LLMABSA (Large Language Model Approach)
-Make sure Ollama is running
-``` 
-ollama run llama3
-```
+The app highlights each aspect in the text, compares models side by side and
+shows the benchmark. For the LLM back-end, install [Ollama](https://ollama.com),
+run `ollama pull llama3`, and start the app with
+`OLLAMA_HOST=http://localhost:11434`.
+
+## Reproduce the benchmark
+
 ```bash
-model = LLMABSA(model_name="llama3", max_aspects=8)
-text = "The coffee was bitter and cold. However, the baristas were very friendly."
-results = model.analyze(text)
-for r in results:
-    print(f"   ➜ {r.aspect:<20} | {r.sentiment:<10} | conf={r.confidence:.2f}")
-```
-Output:
-```
-➜ coffee        | negative   | conf=0.90
-➜ baristas      | positive   | conf=0.85
-```
-## Running Tests
-Each implementation has its own test file under /tests:
-- test_lexicon_absa.py 
-- test_transformer_absa.py 
-- test_llama_absa.py
-
-Run all tests
-``` 
-pytest -v
-```
-Run one test file
-``` 
-pytest -v tests\test_lexicon_absa.py 
+pip install -e ".[transformer,llm,eval]"
+python scripts/benchmark.py --models lexicon transformer   # downloads the SemEval gold file
+python scripts/benchmark.py --models llm --llm-model llama3 # needs Ollama running
 ```
 
+This writes per-model metrics to `results/`, raw predictions to
+`results/predictions/` and charts to `docs/img/`. Pair F1 counts an aspect only
+if its text matches the gold term exactly *and* its polarity is right.
+`conflict` labels are excluded, as is standard. The scorer has its own unit tests
+([`tests/test_evaluate.py`](tests/test_evaluate.py)).
 
-## Unified API Documentation
-All three implementations inherit from the same base interface defined in src/base.py.
+## Tests
 
-### Base Class
-
-```bas
-class AspectSentiment:
-    aspect: str # The aspect/feature mentioned
-    sentiment: str  # 'positive'|'negative'|'neutral'
-    confidence: float  # Confidence score (0.0 to 1.0)
-    text_span: Tuple[int,int] = None # Optional: (start, end) position in original text
-
-class ABSAAnalyzer:
-    """Base class/interface for all ABSA implementations"""
-    def analyze(self, text: str) -> List[AspectSentiment]:
-        """
-        Analyze text and extract aspect-sentiment pairs
-        Args:
-        text: Input text to analyze
-        Returns:
-        List of AspectSentiment objects
-        """
-    raise NotImplementedError
+```bash
+pip install -e ".[dev]"
+pytest -m "not slow and not llm"   # fast suite, runs in CI
+pytest -m slow                     # Transformer tests (downloads models)
+pytest -m llm                      # needs Ollama
 ```
 
-## Design Decisions & Rationale
-### **LexiconABSA (Rule-Based)**
+Known limitations are kept as `xfail` tests rather than deleted, so they stay
+documented and any fix shows up.
 
-- **Use of Noun Chunks:**  
-  We used spaCy’s `noun_chunks` as aspect candidates because they capture complete, meaningful entities (e.g., “mushroom risotto”, “customer service”) rather than isolated words.
+## Project structure
 
-- **Removal of Pronouns:**  
-  Pronouns like *it*, *they*, and *this* are context-dependent and not meaningful aspects on their own. Filtering them prevents false positives.
+```
+src/absa/
+  base.py              ABSAAnalyzer interface + AspectSentiment dataclass
+  lexicon_absa.py      rule-based analyzer (spaCy + VADER)
+  transformer_absa.py  DeBERTa-v3 hybrid analyzer
+  llm_absa.py          Ollama LLM analyzer
+  utils.py             aspect extraction + scoring helpers
+  datasets.py          SemEval-2014 loader
+  evaluate.py          P/R/F1, pair F1, sentiment metrics
+  cli.py               `absa` command
+app/streamlit_app.py   interactive demo
+scripts/benchmark.py   benchmark runner -> results/, docs/img/
+notebooks/             exploratory analysis (Yelp) + qualitative model comparison
+docs/                  design notes, error analysis, original project report
+tests/                 pytest suite (fast / slow / llm markers)
+```
 
-- **Sentence-Level Analysis:**  
-  Sentiment expressions are typically contained within a sentence. Processing each sentence separately avoids sentiment spillover between clauses.
+## Data
 
-- **Custom Sentiment Lexicon & Phrase Overrides:**  
-  To improve domain coverage, custom entries (e.g., “cozy”, “divine”, “worth every penny”) and idiomatic overrides (e.g., “not bad”, “never disappoints”) were added. This ensures polarity alignment in common restaurant-review contexts.
+- **Benchmark:** SemEval-2014 Task 4 (Pontiki et al., 2014), downloaded on demand.
+  It is not redistributed here.
+- **Exploration:** the notebooks use a random sample of the
+  [Yelp Open Dataset](https://www.yelp.com/dataset). Yelp's terms don't allow
+  redistribution, so download it yourself and build the sample with
+  `python scripts/prepare_yelp.py path/to/yelp_academic_dataset_review.json`.
+  This writes `data/yelp/yelp_sample.json` from a fixed seed.
+- **Demo examples** (`data/examples.jsonl`) were written for this project.
 
-- **Aspect–Opinion Linking Patterns:**  
-  Implemented in `_find_aspect_opinions_in_sent()`, this function uses dependency relations like:
-  - `amod` / `acomp` → adjectival modifiers (“delicious pizza”)  
-  - `nsubj` + copular verbs → (“service was slow”)  
-  - `verb-object` pairs → (“staff disappointed”)  
-  - Coordinations and relative clauses → (“cake, which was divine”)  
-  These patterns robustly map aspects to their sentiment expressions in varied syntax.
+## Limitations and future work
 
----
+- Fine-tune the aspect tagger on in-domain (Yelp) data, and distil it to cut
+  CPU latency.
+- Group aspect terms into categories (food, service, ambience, price) for
+  review-level dashboards.
+- Add a hosted-LLM back-end so the LLM option works without a local Ollama server.
+- Handle sarcasm and implicit aspects ("we waited 40 minutes" → *service*
+  negative). All three approaches still struggle with these.
 
-### **TransformerABSA (Hybrid Pretrained Models)**
+## Authors and credits
 
-- **Hybridization Decision:**  
-  During model exploration:
-  - `yangheng/deberta-v3-base-end2end-absa` was strong at **aspect extraction** but weaker in sentiment labeling.  
-  - `yangheng/deberta-v3-base-absa-v1.1` excelled in **sentiment classification** but did not extract aspects automatically.  
-  The solution was to **hybridize both models** one to detect aspects, the other to classify their sentiment achieving higher precision and recall together.
+Built by **Megane Fomo** and **Lesly Tianga**. It started as a course project in
+Applied Computer Science, Data & AI. The original project report is at
+[`docs/report.pdf`](docs/report.pdf).
 
-- **Exception-Safe Loading:**  
-  Implemented try–except logic for model initialization to handle missing or incompatible Hugging Face models gracefully.
+**My contributions (Megane Fomo)**
+- Designed and implemented **`LexiconABSA`**: the dependency-pattern rules that
+  link aspects to opinion words, the domain lexicon, and the negation,
+  intensifier and diminisher handling.
+- Designed and implemented **`TransformerABSA`**: combining two DeBERTa-v3 models
+  (one for aspect tagging, one for aspect-conditioned sentiment).
+- Built the **model comparison notebook** (`notebooks/comparison.ipynb`).
+- Turned the course project into this portfolio version: packaging and CLI, CI,
+  the SemEval-2014 benchmark and evaluation code, the bug fixes it surfaced
+  (pair F1 0.256 → 0.417 for the lexicon model, 0.647 → 0.681 for the
+  Transformer), the Streamlit demo and the error analysis.
 
-- **Confidence-Based Merging:**  
-  If a sentiment prediction has low confidence but aspect extraction is strong, the model uses aspect confidence as a fallback for stability.
+**AI assistance:** parts of the code and documentation were drafted with AI
+assistants (ChatGPT, Perplexity, Claude). The authors reviewed, tested and
+validated all of it. The design, evaluation and conclusions are the authors'
+own.
 
----
+**Models and libraries:** [spaCy](https://spacy.io),
+[VADER](https://github.com/cjhutto/vaderSentiment),
+[yangheng/deberta-v3-base-end2end-absa](https://huggingface.co/yangheng/deberta-v3-base-end2end-absa),
+[yangheng/deberta-v3-base-absa-v1.1](https://huggingface.co/yangheng/deberta-v3-base-absa-v1.1),
+[Ollama](https://ollama.com).
 
-### **LLMABSA (Ollama – Prompt-Engineered LLM)**
-
-- **Prompt Engineering:**  
-  A structured system prompt was designed to enforce JSON output, guide the model to identify noun-based aspects, and classify each as *positive*, *negative*, or *neutral*.  
-  Few-shot examples were added to stabilize responses and reduce ambiguity.
-
-- **Strict Output Schema:**  
-  The model is instructed to return responses as:
-  ```json
-  [
-    {"aspect": "service", "sentiment": "negative", "confidence": 0.85}
-  ]
-
-
-## References
-- **spaCy Documentation:** [https://spacy.io/](https://spacy.io/)
-- **VADER Sentiment:** [Python Sentiment Analysis using VADER](https://www.geeksforgeeks.org/python/python-sentiment-analysis-using-vader/)
-- **Hugging Face Transformers:**
-  - [LLM Course (Chapter 0)](https://huggingface.co/learn/llm-course/chapter0/1)
-  - [DeBERTa-v3-large-ABSA-v1.1](https://huggingface.co/yangheng/deberta-v3-large-absa-v1.1)
-  - [DeBERTa-v3-base-end2end-ABSA](https://huggingface.co/yangheng/deberta-v3-base-end2end-absa)
-- **Ollama Local LLMs:** [Ollama API Docs](https://github.com/ollama/ollama/blob/main/docs/api.md)
-- **Other resources:**
-  - [What is Sentiment Analysis?](https://www.geeksforgeeks.org/machine-learning/what-is-sentiment-analysis/)
-  - [Stanford Sentiment Treebank Paper (Socher et al., 2014)](https://nlp.stanford.edu/pubs/USD_LREC14_paper_camera_ready.pdf)
-  - [Universal Dependencies Project](https://universaldependencies.org/u/dep/)
-- **Testing:** [Pytest Documentation](https://docs.pytest.org/en/stable/)
-- **Code Assistance:** ChatGPT
-
-## Responsible Use of AI Tools
-
-This project was developed with the support of AI-assisted tools (ChatGPT,Perplexity) for:
-- Code generation and debugging support  
-- Documentation structuring and explanation drafting  
-
-All AI-generated content was **reviewed, verified, and edited** by the authors.  
-All analysis, model design, interpretation, and final conclusions were **entirely performed by the project authors**.  
-No section of this report or notebook was submitted without human review and validation.
-
+Licensed under the [MIT License](LICENSE).
