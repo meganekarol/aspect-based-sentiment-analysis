@@ -1,7 +1,7 @@
 import json
 from unittest.mock import patch
-from src.llm_absa import LLMABSA
-from src.base import AspectSentiment
+from absa.llm_absa import LLMABSA
+from absa.base import AspectSentiment
 
 # Code Reference: The Code was generated with the help of ChatGpt
 # ---------------------------------------------------------------------
@@ -49,7 +49,7 @@ def mock_chat_error(*args, **kwargs):
 # TESTS
 # ---------------------------------------------------------------------
 
-@patch("src.llm_absa.chat", side_effect=mock_chat_single_aspect)
+@patch("absa.llm_absa.chat", side_effect=mock_chat_single_aspect)
 def test_simple_case(mock_chat):
     """Test a simple review with one clear aspect and sentiment."""
     analyzer = LLMABSA(model_name="llama3")
@@ -64,7 +64,7 @@ def test_simple_case(mock_chat):
     assert 0.0 <= r.confidence <= 1.0
 
 
-@patch("src.llm_absa.chat", side_effect=mock_chat_multiple_aspects)
+@patch("absa.llm_absa.chat", side_effect=mock_chat_multiple_aspects)
 def test_complex_case(mock_chat):
     """Test a review with multiple aspects and mixed sentiments."""
     analyzer = LLMABSA(model_name="llama3")
@@ -78,7 +78,7 @@ def test_complex_case(mock_chat):
     assert any(r.sentiment == "neutral" for r in results)
 
 
-@patch("src.llm_absa.chat", side_effect=mock_chat_edge_case)
+@patch("absa.llm_absa.chat", side_effect=mock_chat_edge_case)
 def test_edge_case_sarcasm(mock_chat):
     """Test sarcastic or implicit sentiment cases."""
     analyzer = LLMABSA(model_name="llama3")
@@ -92,7 +92,7 @@ def test_edge_case_sarcasm(mock_chat):
     assert sentiments["staff"] == "positive"
 
 
-@patch("src.llm_absa.chat", side_effect=mock_chat_error)
+@patch("absa.llm_absa.chat", side_effect=mock_chat_error)
 def test_retry_logic(mock_chat):
     """Test retry mechanism handles repeated failures gracefully."""
     analyzer = LLMABSA(model_name="llama3")

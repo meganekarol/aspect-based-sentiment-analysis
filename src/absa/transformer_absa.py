@@ -19,7 +19,7 @@ from transformers import pipeline, AutoTokenizer, AutoModelForSequenceClassifica
 import torch
 import warnings
 
-from src.base import ABSAAnalyzer, AspectSentiment
+from absa.base import ABSAAnalyzer, AspectSentiment
 
 
 # ------------------------------------------------------------

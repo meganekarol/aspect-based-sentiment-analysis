@@ -14,7 +14,7 @@ Code Reference: The Code was generated with the help of ChatGpt
 """
 
 import pytest
-from src.transformer_absa import TransformerABSA, TransformerABSAConfig
+from absa.transformer_absa import TransformerABSA, TransformerABSAConfig
 
 
 # ------------------------------------------------------------

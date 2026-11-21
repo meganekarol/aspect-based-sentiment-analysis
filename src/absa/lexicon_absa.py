@@ -17,8 +17,8 @@ import spacy
 from spacy.language import Language
 from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
 
-from src.base import AspectSentiment, ABSAAnalyzer
-from src.utils import (
+from absa.base import AspectSentiment, ABSAAnalyzer
+from absa.utils import (
     extract_aspects_spacy,
     NEGATIONS,
     INTENSIFIERS,

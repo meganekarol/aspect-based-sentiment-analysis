@@ -1,7 +1,7 @@
 import unittest
-from src.lexicon_absa import LexiconABSA,LexiconABSAConfig
-from src.transformer_absa import TransformerABSA ,TransformerABSAConfig
-from src.llm_absa import LLMABSA
+from absa.lexicon_absa import LexiconABSA,LexiconABSAConfig
+from absa.transformer_absa import TransformerABSA ,TransformerABSAConfig
+from absa.llm_absa import LLMABSA
 
 
 class TestAllABSA(unittest.TestCase):

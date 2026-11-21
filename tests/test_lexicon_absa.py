@@ -10,7 +10,7 @@ Covers:
 """
 
 import pytest
-from src.lexicon_absa import LexiconABSA, LexiconABSAConfig
+from absa.lexicon_absa import LexiconABSA, LexiconABSAConfig
 
 
 # ------------------------------------------------------------

@@ -15,7 +15,7 @@ import json
 import time
 from typing import List, Optional, Tuple
 from ollama import chat
-from src.base import ABSAAnalyzer, AspectSentiment
+from absa.base import ABSAAnalyzer, AspectSentiment
 
 
 class LLMABSA(ABSAAnalyzer):
