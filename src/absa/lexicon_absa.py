@@ -1,42 +1,56 @@
 """
-Implementation 1 — Lexicon-Based Approach with spaCy
-------------------------------------------------
+Lexicon-based ABSA with spaCy + VADER.
+
 Linguistic parsing with spaCy
 Sentiment via VADER
 Focus on interpretability and speed
 Uses dependency patterns and custom lexicon
 
-Code Reference: The Code was generated with the help of ChatGpt
 """
 
 import warnings
-
 from dataclasses import dataclass
-from typing import Dict, List, Optional, Set, Tuple
+
 import spacy
 from spacy.language import Language
 from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
 
-from absa.base import AspectSentiment, ABSAAnalyzer
+from absa.base import ABSAAnalyzer, AspectSentiment
 from absa.utils import (
-    extract_aspects_spacy,
-    NEGATIONS,
-    INTENSIFIERS,
     DIMINISHERS,
-    squash_confidence,
+    INTENSIFIERS,
+    NEGATIONS,
     choose_label,
+    extract_aspects_spacy,
+    squash_confidence,
 )
 
 # -----------------------------------------------------------
 # Custom Lexicon Overrides (context fixes for VADER)
 # -----------------------------------------------------------
 CUSTOM_SENTIMENT = {
-    "packed": -0.4, "busy": -0.3, "crowded": -0.5, "slow": -0.4,
-    "cold": -0.3, "overpriced": -0.6, "rude": -0.7,
-    "friendly": 0.6, "tasty": 0.6, "delicious": 0.7, "fresh": 0.5,
-    "perfection": 0.8, "divine": 0.8, "cozy": 0.6, "amazing": 0.7,
-    "excellent": 0.7, "wonderful": 0.7, "fantastic": 0.7,
-    "terrible": -0.7, "awful": -0.7, "horrible": -0.7, "bland": -0.5
+    "packed": -0.4,
+    "busy": -0.3,
+    "crowded": -0.5,
+    "slow": -0.4,
+    "cold": -0.3,
+    "overpriced": -0.6,
+    "rude": -0.7,
+    "friendly": 0.6,
+    "tasty": 0.6,
+    "delicious": 0.7,
+    "fresh": 0.5,
+    "perfection": 0.8,
+    "divine": 0.8,
+    "cozy": 0.6,
+    "amazing": 0.7,
+    "excellent": 0.7,
+    "wonderful": 0.7,
+    "fantastic": 0.7,
+    "terrible": -0.7,
+    "awful": -0.7,
+    "horrible": -0.7,
+    "bland": -0.5,
 }
 
 # -----------------------------------------------------------
@@ -51,27 +65,33 @@ PHRASE_OVERRIDES = {
     "nothing special": -0.3,
 }
 
+
 # -----------------------------------------------------------
 # Configuration
 # -----------------------------------------------------------
 @dataclass
 class LexiconABSAConfig:
     """Configuration for the Lexicon-Based ABSA analyzer."""
+
     model: str = "en_core_web_sm"
     opinion_min_abs: float = 0.10
     pos_th: float = 0.12
     neg_th: float = -0.12
+    # Also report aspects with no linked opinion word, labelled neutral.
+    # Raises recall (gold data contains many neutral aspects) at some cost in precision.
+    emit_neutral: bool = False
+    neutral_confidence: float = 0.5
 
 
 # -----------------------------------------------------------
 # Implementation
 # -----------------------------------------------------------
 class LexiconABSA(ABSAAnalyzer):
-    def __init__(self, cfg: Optional[LexiconABSAConfig] = None, nlp: Optional[Language] = None):
+    def __init__(self, cfg: LexiconABSAConfig | None = None, nlp: Language | None = None):
         self.cfg = cfg or LexiconABSAConfig()
         self.analyzer = SentimentIntensityAnalyzer()
         self._nlp = nlp or self._load_nlp(self.cfg.model)
-        self._phrase_scores: Dict[int, float] = {}
+        self._phrase_scores: dict[int, float] = {}
 
     @staticmethod
     def _load_nlp(model: str) -> Language:
@@ -90,14 +110,15 @@ class LexiconABSA(ABSAAnalyzer):
                 "Falling back to a blank English pipeline (no POS/DEP). "
                 "Install 'en_core_web_sm' for full functionality:\n"
                 "  python -m spacy download en_core_web_sm",
-                UserWarning
+                UserWarning,
+                stacklevel=2,
             )
             nlp = spacy.blank("en")
             if "sentencizer" not in nlp.pipe_names:
                 nlp.add_pipe("sentencizer")
             return nlp
 
-    def _span_sentiment(self,text: str) -> float:
+    def _span_sentiment(self, text: str) -> float:
         t = text.lower().strip()
         if t in PHRASE_OVERRIDES:
             return PHRASE_OVERRIDES[t]
@@ -113,7 +134,9 @@ class LexiconABSA(ABSAAnalyzer):
         except ValueError:
             for tok in doc:
                 sent_index_by_token[tok.i] = 0
-        base = extract_aspects_spacy(doc)
+        base = extract_aspects_spacy(
+            doc, is_opinion=lambda w: abs(self._opinion_score(w)) >= self.cfg.opinion_min_abs
+        )
         for i, (text, span) in base.items():
             aspects[i] = (text, span, sent_index_by_token.get(i, 0))
         return aspects
@@ -123,6 +146,7 @@ class LexiconABSA(ABSAAnalyzer):
         if word in CUSTOM_SENTIMENT:
             return CUSTOM_SENTIMENT[word]
         return self.analyzer.polarity_scores(token_text)["compound"]
+
     # -----------------------------------------------------------
     # Sentiment Modifiers
     # -----------------------------------------------------------
@@ -138,9 +162,9 @@ class LexiconABSA(ABSAAnalyzer):
         score = float(raw_score)
 
         try:
-            sent = token.sent
+            pass
         except Exception:
-            sent = token.doc[:]
+            token.doc[:]
 
         # Intensifiers/diminishers via advmod
         factor = 1.0
@@ -160,13 +184,10 @@ class LexiconABSA(ABSAAnalyzer):
 
         negated = any(is_negator(ch) for ch in token.children)
 
-        # Copular/adjectival complements (e.g., "buffet is fresh")
-        if not negated:
-            head = token.head
-            if head is not None and head.dep_ in {"acomp", "attr"}:
-                gov = head.head
-                if gov is not None:
-                    negated = any(is_negator(ch) for ch in gov.children)
+        # Copular/adjectival complements: in "food was not good" the negator
+        # attaches to the copula ("was"), not to the opinion word ("good").
+        if not negated and token.dep_ in {"acomp", "attr"}:
+            negated = any(is_negator(ch) for ch in token.head.children)
 
         # Valence-aware negation flip
         if negated:
@@ -179,8 +200,15 @@ class LexiconABSA(ABSAAnalyzer):
 
     def _is_opinion_verb(self, tok) -> bool:
         return tok.lemma_.lower() in {
-            "love", "like", "enjoy", "recommend", "prefer",
-            "hate", "dislike", "appreciate", "adore"
+            "love",
+            "like",
+            "enjoy",
+            "recommend",
+            "prefer",
+            "hate",
+            "dislike",
+            "appreciate",
+            "adore",
         }
 
     # Build short verb phrase like "never disappoints", "really shines"
@@ -194,7 +222,9 @@ class LexiconABSA(ABSAAnalyzer):
         phrase = " ".join(parts) if parts else verb.text
         return phrase
 
-    def _find_aspect_opinions_in_sent(self, sent, aspects_in_sent: Set[int], doc, aspects_idx) -> List[Tuple[int, int]]:
+    def _find_aspect_opinions_in_sent(
+        self, sent, aspects_in_sent: set[int], doc, aspects_idx
+    ) -> list[tuple[int, int]]:
         """
         Identify (aspect, opinion) pairs in a sentence using dependency relations.
 
@@ -210,7 +240,7 @@ class LexiconABSA(ABSAAnalyzer):
         """
         pairs = []
 
-        def add(a_i, o_i, phrase: Optional[str] = None):
+        def add(a_i, o_i, phrase: str | None = None):
             if a_i is not None and o_i is not None:
                 pairs.append((a_i, o_i))
                 if phrase:
@@ -264,26 +294,29 @@ class LexiconABSA(ABSAAnalyzer):
 
             # Pattern 8: verb with subject aspect — "buffet never disappoints"
             if tok.pos_ == "VERB":
-                subj = next((c for c in tok.children if c.dep_ in {"nsubj", "nsubjpass"} and c.i in aspects_in_sent), None)
+                subj = next(
+                    (c for c in tok.children if c.dep_ in {"nsubj", "nsubjpass"} and c.i in aspects_in_sent),
+                    None,
+                )
                 if subj is not None:
                     phrase = self._build_verb_phrase(tok)  # e.g., "never disappoints"
                     add(subj.i, tok.i, phrase=phrase)
 
         return pairs
 
-    def analyze(self, text: str) -> List[AspectSentiment]:
+    def analyze(self, text: str) -> list[AspectSentiment]:
         doc = self._nlp(text)
         aspects_idx = self._extract_aspects(doc)
 
         # reset per-call phrase store
         self._phrase_scores = {}
 
-        by_sent: Dict[int, Set[int]] = {}
+        by_sent: dict[int, set[int]] = {}
         for a_i, (_, _, s_id) in aspects_idx.items():
             by_sent.setdefault(s_id, set()).add(a_i)
 
-        agg_by_aspect: Dict[str, float] = {}
-        hits_by_aspect: Dict[str, int] = {}
+        agg_by_aspect: dict[str, float] = {}
+        hits_by_aspect: dict[str, int] = {}
 
         try:
             sentences = list(doc.sents)
@@ -316,31 +349,23 @@ class LexiconABSA(ABSAAnalyzer):
                     hits_by_aspect[a_text] = hits_by_aspect.get(a_text, 0) + 1
 
         results = []
-        for a_i, (a_text, span, _) in aspects_idx.items():
+        seen: set[str] = set()
+        for a_text, span, _ in aspects_idx.values():
             total = agg_by_aspect.get(a_text, 0.0)
             count = hits_by_aspect.get(a_text, 0)
-            if count == 0:
+            # One result per aspect text (scores are already aggregated across mentions)
+            if a_text in seen:
                 continue
+            if count == 0:
+                if self.cfg.emit_neutral:
+                    seen.add(a_text)
+                    results.append(AspectSentiment(a_text, "neutral", self.cfg.neutral_confidence, span))
+                continue
+            seen.add(a_text)
 
             avg = total / count
             label = choose_label(avg, self.cfg.pos_th, self.cfg.neg_th)
             conf = squash_confidence(avg)
 
-            results.append(
-                AspectSentiment(
-                    aspect=a_text,
-                    sentiment=label,
-                    confidence=conf,
-                    text_span=span
-                )
-            )
+            results.append(AspectSentiment(aspect=a_text, sentiment=label, confidence=conf, text_span=span))
         return results
-
-if __name__ == "__main__":
-
-    model = LexiconABSA(LexiconABSAConfig())
-    text = "The food was great but the service was slow."
-    results = model.analyze(text)
-
-    for r in results:
-        print(f"   ➜ {r.aspect:<20} | {r.sentiment:<10} | conf={r.confidence:.2f}")
